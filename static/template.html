@@ -1,53 +1,159 @@
-<html>
+<html ng-app="app">
+<script src="../static/mustache.min.js"></script>
+<script src="../static/angular.min.js"></script>
+<script src="../static/ui-bootstrap-tpls-2.5.0.min.js"></script>
+<link rel="stylesheet" href="../static/css/bootstrap.min.css"/>
 <body>
-<form method="post">
-    {{range $section := .Sections}}
-    <h1>{{$section.Name}}</h1>
-    <table>
-        <thead>
-        <tr>
-            <th>Param name</th>
-            <th>Param value</th>
-        </tr>
-        </thead>
-        <tbody id="{{$section.Name}}">
-        {{range $key, $value := $section.Values}}
-        <tr>
-            <td>
-                <input type="text" name="{{$section.Name}}/name" value="{{$key}}"/>
-            </td>
-            <td>
-                <input type="text" name="{{$section.Name}}/value" value="{{$value}}"/>
-            </td>
-        </tr>
-        {{end}}
-        </tbody>
-    </table>
-    <button type="button" onclick="addTo('{{$section.Name}}')">Add</button>
-    {{end}}
-    <button type="submit">Save</button>
-</form>
+<div class="container-fluid" ng-controller="data">
+    <div class="col-lg-2">
+        <h2>Configurations</h2>
+        <button id="save" type="button" ng-click="save()" class="btn btn-success" ng-bind="status">
+
+        </button>
+        <hr/>
+        <ul class="nav nav-pills nav-stacked">
+            {% range .Links %}
+            <li class="{% if eq . $.Params.Filename %}active{% end %}">
+                <a href="{% . %}">{% . %}</a>
+            </li>
+            {% end %}
+        </ul>
+    </div>
+    <div class="col-lg-10">
+        <h1>{% .Params.Filename %}</h1>
+        <form method="post" style="margin-top: 10px">
+
+            <div>
+                <input type="text" ng-model="search" placeholder="Search key or value" class="form-control"/>
+            </div>
+            <div ng-repeat="section in data.Sections track by $index">
+                <div class="row">
+                    <div class="col-sm-8">
+                        <p style="font-size: 23px" ng-bind="section.Name"></p>
+                    </div>
+                    <div class="col-sm-4 text-right">
+                        <div class="btn-group" role="group">
+                            <button type="button" class="btn btn-default"
+                                    ng-click="changeSection(section)"
+                                    aria-label="Change section name">
+                                <span class="glyphicon glyphicon-pencil" aria-hidden="true"></span>
+                            </button>
+                            <button type="button" class="btn btn-danger"
+                                    ng-click="data.Sections.splice($index,1)"
+                                    aria-label="Remove section">
+                                <span class="glyphicon glyphicon-trash" aria-hidden="true"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <table class="table table-bordered">
+                    <thead>
+                    <tr>
+                        <th>Param name</th>
+                        <th>Param value</th>
+                        <th>Action</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr ng-repeat="item in section.Values | filter:search track by $index">
+                        <td>
+                            <input type="text" ng-model="item.Key" class="form-control"/>
+                        </td>
+                        <td>
+                            <input type="text" ng-model="item.Value" class="form-control"/>
+                        </td>
+                        <td>
+                            <button type="button" ng-click="section.Values.splice($index, 1)"
+                                    class="btn btn-warning"
+                                    aria-label="Remove">
+                                <span class="glyphicon glyphicon-trash" aria-hidden="true"></span>
+                            </button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td>
+                            <button type="button" ng-click="addItem(section)" class="btn btn-primary">Add</button>
+                        </td>
+                        <td></td>
+                    </tr>
+                    </tbody>
+                </table>
+                <hr/>
+            </div>
+            <div class="input-group">
+            <span class="input-group-btn">
+            <button type="button" ng-click="addSection(section_name)" class="btn btn-success">Add section</button>
+            </span>
+                <input type="text" ng-model="section_name" placeholder="Section name" class="form-control"/>
+            </div>
+            <p class="text-right">
+                <a href="#save">
+                    <span class="glyphicon glyphicon-arrow-up" aria-hidden="true"></span>
+                    Save
+                </a>
+            </p>
+
+        </form>
+    </div>
+</div>
 <script>
-    function addTo(section) {
-        var tbody = document.getElementById(section);
-        var tr = document.createElement("tr");
+    var filename = "{% .Params.Filename %}";
+    var app = angular.module('app', ['ui.bootstrap']);
+    app.controller('data', ['$scope', '$http', "$timeout", function ($scope, $http, $timeout) {
+        var timer = undefined;
+        $scope.status = "Save";
+        $scope.data = {};
+        $scope.addItem = function (section) {
+            section.Values.push({Key: "", Value: ""});
+        };
+        $scope.addSection = function (name) {
+            $scope.data.Sections.push({Name: name, Values: [{Key: "", Value: ""}]})
+        };
 
-        var tdK = document.createElement("td");
-        var inputK = document.createElement("input");
-        inputK.setAttribute("type", "text");
-        inputK.setAttribute("name", section + "/name");
-        tdK.appendChild(inputK);
-        tr.appendChild(tdK);
+        $scope.changeSection = function (section) {
+            var name = prompt("Please enter section name", section.Name);
 
-        var tdV = document.createElement("td");
-        var inputV = document.createElement("input");
-        inputV.setAttribute("type", "text");
-        inputV.setAttribute("name", section + "/value");
-        tdV.appendChild(inputV);
-        tr.appendChild(tdV);
+            if (name === null || name === "") {
 
-        tbody.appendChild(tr);
-    }
+            } else {
+                section.Name = name;
+            }
+        };
+
+        function saved() {
+            $scope.status = "Saved";
+            $timeout.cancel(timer);
+            timer = $timeout(function () {
+                $scope.status = "Save";
+            }, 5000);
+            console.info("Saved!");
+        }
+
+        function failed(err) {
+            $scope.status = "Failed";
+            $timeout.cancel(timer);
+            timer = $timeout(function () {
+                $scope.status = "Save";
+            }, 5000);
+            console.error(err);
+        }
+
+        $scope.save = function () {
+            $timeout.cancel(timer);
+            $scope.status = "Saving...";
+            $http.post('../data/' + filename, JSON.stringify($scope.data), {headers: {'Content-Type': 'application/json'}}).then(saved, failed);
+        };
+
+        $http.get('../data/' + filename).then(function (content) {
+            $scope.data = content.data;
+        });
+
+
+    }]);
+
+
 </script>
 </body>
 </html>

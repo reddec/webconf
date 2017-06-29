@@ -7,19 +7,26 @@ import (
 	"bytes"
 	"flag"
 	"github.com/julienschmidt/httprouter"
+	"github.com/satori/go.uuid"
+	"encoding/json"
+	"io/ioutil"
 	"strings"
 )
 
-type data map[string]string
+type Item struct {
+	Key   string
+	Value string
+}
 
 type Group struct {
 	Name   string
-	Values data
+	Values []Item
 }
 
 type Params struct {
-	Default  data
+	Default  []Item
 	Sections []Group
+	Filename string
 }
 
 func getIniFile(filename string) (Params, error) {
@@ -29,17 +36,21 @@ func getIniFile(filename string) (Params, error) {
 	if err != nil {
 		return res, nil
 	}
+
 	for _, sec := range f.Sections() {
-		var vals data = make(data)
+		var group Group
+		group.Name = sec.Name()
+
 		for _, k := range sec.Keys() {
-			vals[k.Name()] = k.Value()
+			group.Values = append(group.Values, Item{k.Name(), k.Value()})
 		}
 		if sec.Name() != "DEFAULT" {
-			res.Sections = append(res.Sections, Group{Name: sec.Name(), Values: vals})
+			res.Sections = append(res.Sections, group)
 		} else {
-			res.Default = vals
+			res.Default = group.Values
 		}
 	}
+	res.Filename = filename
 	return res, nil
 }
 
@@ -49,8 +60,8 @@ func saveIniFile(filename string, res Params) error {
 	if err != nil {
 		return err
 	}
-	for k, v := range res.Default {
-		_, err = s.NewKey(k, v)
+	for _, kv := range res.Default {
+		_, err = s.NewKey(kv.Key, kv.Value)
 		if err != nil {
 			return err
 		}
@@ -60,8 +71,8 @@ func saveIniFile(filename string, res Params) error {
 		if err != nil {
 			return err
 		}
-		for k, v := range section.Values {
-			_, err = s.NewKey(k, v)
+		for _, kv := range section.Values {
+			_, err = s.NewKey(kv.Key, kv.Value)
 			if err != nil {
 				return err
 			}
@@ -70,25 +81,86 @@ func saveIniFile(filename string, res Params) error {
 	return f.SaveTo(filename)
 }
 
+type View struct {
+	Params *Params
+	UUID   string
+	Links  []string
+}
+
+func (v *View) NextUUID() string {
+	v.UUID = uuid.NewV4().String()
+	return v.UUID
+}
+
+func scanFiles() []string {
+	stats, err := ioutil.ReadDir(".")
+	if err != nil {
+		return nil
+	}
+	var res []string
+	for _, f := range stats {
+		if strings.HasSuffix(f.Name(), ".ini") {
+			res = append(res, f.Name())
+		}
+	}
+	return res
+}
+
 func renderPage(params *Params) (string, error) {
 	data, _ := staticTemplateHtmlBytes()
-	t, err := template.New("").Parse(string(data))
+	t, err := template.New("").Delims("{%", "%}").Funcs(template.FuncMap{"json": func(v interface{}) template.JS {
+		a, _ := json.Marshal(v)
+		return template.JS(a)
+	},
+	}).Parse(string(data))
 	if err != nil {
 		return "", err
 	}
 	buf := &bytes.Buffer{}
-	err = t.Execute(buf, params)
+	err = t.Execute(buf, &View{Params: params, UUID: uuid.NewV4().String(), Links: scanFiles()})
 	return buf.String(), err
 }
 
-//go:generate go-bindata-assetfs static/
+//go:generate go-bindata-assetfs static/...
 func main() {
 	bind := flag.String("bind", ":9000", "HTTP Binding")
 	flag.Parse()
 
 	router := httprouter.New()
-	router.Handler("GET", "/static", http.FileServer(assetFS()))
-	router.GET("/edit/:filename", func(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	router.ServeFiles("/static/*filepath", assetFS())
+	router.GET("/data/:filename", func(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+		file := params.ByName("filename")
+		prm, err := getIniFile(file)
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		ec := json.NewEncoder(writer)
+		ec.SetIndent("", "    ")
+		ec.Encode(prm)
+	})
+	router.POST("/data/:filename", func(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+		file := params.ByName("filename")
+		if request.Header.Get("Content-Type") != "application/json" {
+			http.Error(writer, "application/json required", http.StatusBadRequest)
+			return
+		}
+		var cfg Params
+		err := json.NewDecoder(request.Body).Decode(&cfg)
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusBadRequest)
+			return
+		}
+		err = saveIniFile(file, cfg)
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	})
+	router.GET("/editor/:filename", func(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
 		file := params.ByName("filename")
 		prm, err := getIniFile(file)
 		if err != nil {
@@ -103,44 +175,6 @@ func main() {
 		writer.Header().Set("Content-Type", "text/html")
 		writer.WriteHeader(http.StatusOK)
 		writer.Write([]byte(text))
-	})
-	router.POST("/edit/:filename", func(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
-		file := params.ByName("filename")
-		err := request.ParseForm()
-		if err != nil {
-			http.Error(writer, err.Error(), http.StatusBadRequest)
-			return
-		}
-		var cfg Params
-		for k, v := range request.Form {
-			sv := strings.SplitN(k, "/", 2)
-			sectionName, type_ := sv[0], sv[1]
-			if type_ == "name" {
-				var section Group
-				section.Name = sectionName
-				section.Values = make(data)
-				values := request.Form[sectionName+"/value"]
-				for i, key := range v {
-					if i < len(values) {
-						value := values[i]
-						section.Values[key] = value
-					}
-				}
-				if sectionName == "" {
-					cfg.Default = section.Values
-				} else {
-					cfg.Sections = append(cfg.Sections, section)
-				}
-			}
-		}
-		err = saveIniFile(file, cfg)
-		if err != nil {
-			http.Error(writer, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writer.WriteHeader(http.StatusOK)
-		writer.Write([]byte("<html><body><a href='" + file + "'> Save. Return to edit</a></body></html>" ))
-
 	})
 	http.Handle("/", router)
 	panic(http.ListenAndServe(*bind, nil))
