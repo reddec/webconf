@@ -1,0 +1,53 @@
+<html>
+<body>
+<form method="post">
+    {{range $section := .Sections}}
+    <h1>{{$section.Name}}</h1>
+    <table>
+        <thead>
+        <tr>
+            <th>Param name</th>
+            <th>Param value</th>
+        </tr>
+        </thead>
+        <tbody id="{{$section.Name}}">
+        {{range $key, $value := $section.Values}}
+        <tr>
+            <td>
+                <input type="text" name="{{$section.Name}}/name" value="{{$key}}"/>
+            </td>
+            <td>
+                <input type="text" name="{{$section.Name}}/value" value="{{$value}}"/>
+            </td>
+        </tr>
+        {{end}}
+        </tbody>
+    </table>
+    <button type="button" onclick="addTo('{{$section.Name}}')">Add</button>
+    {{end}}
+    <button type="submit">Save</button>
+</form>
+<script>
+    function addTo(section) {
+        var tbody = document.getElementById(section);
+        var tr = document.createElement("tr");
+
+        var tdK = document.createElement("td");
+        var inputK = document.createElement("input");
+        inputK.setAttribute("type", "text");
+        inputK.setAttribute("name", section + "/name");
+        tdK.appendChild(inputK);
+        tr.appendChild(tdK);
+
+        var tdV = document.createElement("td");
+        var inputV = document.createElement("input");
+        inputV.setAttribute("type", "text");
+        inputV.setAttribute("name", section + "/value");
+        tdV.appendChild(inputV);
+        tr.appendChild(tdV);
+
+        tbody.appendChild(tr);
+    }
+</script>
+</body>
+</html>
