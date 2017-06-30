@@ -1,5 +1,4 @@
 <html ng-app="app">
-<script src="../static/mustache.min.js"></script>
 <script src="../static/angular.min.js"></script>
 <script src="../static/ui-bootstrap-tpls-2.5.0.min.js"></script>
 <link rel="stylesheet" href="../static/css/bootstrap.min.css"/>
@@ -7,20 +6,66 @@
 <div class="container-fluid" ng-controller="data">
     <div class="col-lg-2">
         <h2>Configurations</h2>
-        <button id="save" type="button" ng-click="save()" class="btn btn-success" ng-bind="status">
 
-        </button>
         <hr/>
-        <ul class="nav nav-pills nav-stacked">
-            {% range .Links %}
-            <li class="{% if eq . $.Params.Filename %}active{% end %}">
-                <a href="{% . %}">{% . %}</a>
+        <input type="text" class="form-control" placeholder="filter..." ng-model="links_filter"/>
+        <ul class="nav nav-pills nav-stacked" ng-init="links = {% .Links | json%}">
+            <li class="{{link === '{% .Params.Filename %}' ? 'active' : '' }} "
+                ng-repeat="link in links | filter:links_filter">
+                <a href="{{link}}" ng-bind="link"></a>
             </li>
-            {% end %}
         </ul>
+        {% if .AllowCreate %}
+        <hr/>
+        <form ng-submit="addFile(file_name)">
+            <span>File: </span>
+            <input type="text" ng-model="file_name" placeholder="New file name" class="form-control"/>
+        </form>
+        <hr/>
+        <b ng-if="templates.length > 0">From template</b>
+        <ul class="nav nav-pills nav-stacked">
+
+            <li ng-repeat="template in templates">
+                <div class="row">
+                    <div class="col-md-10">
+                        <a href="" ng-click="fromTemplate(template)">{{template}}</a>
+                    </div>
+                    {% if .AllowDelete %}
+                    <div class="col-md-2">
+                        <button type="button" class="btn btn-danger"
+                                ng-click="removeTemplate(template)"
+                                aria-label="Remove template">
+                            <span class="glyphicon glyphicon-trash" aria-hidden="true"></span>
+                        </button>
+                    </div>
+                    {% end %}
+                </div>
+            </li>
+
+        </ul>
+        {% end %}
     </div>
     <div class="col-lg-10">
         <h1>{% .Params.Filename %}</h1>
+
+        <div class="btn-group" role="group">
+            {% if .AllowDelete %}
+            <button type="button" class="btn btn-danger"
+                    ng-click="selfRemove()"
+                    aria-label="Remove file">
+                <span class="glyphicon glyphicon-trash" aria-hidden="true"></span> Remove
+            </button>
+            {% end %}
+            <button id="save" type="button" ng-click="save()" class="btn btn-success">
+                <span class="glyphicon glyphicon-floppy-save"></span> {{status}}
+            </button>
+            {% if .AllowSaveTemplate %}
+            <button type="button" ng-click="saveAsTemplate()" class="btn btn-primary">
+                <span class="glyphicon glyphicon-record"></span> As template
+            </button>
+            {% end %}
+        </div>
+
         <form method="post" style="margin-top: 10px">
 
             <div>
@@ -47,7 +92,7 @@
                     </div>
                 </div>
 
-                <table class="table table-bordered">
+                <table class="table">
                     <thead>
                     <tr>
                         <th>Param name</th>
@@ -82,12 +127,7 @@
                 </table>
                 <hr/>
             </div>
-            <div class="input-group">
-            <span class="input-group-btn">
-            <button type="button" ng-click="addSection(section_name)" class="btn btn-success">Add section</button>
-            </span>
-                <input type="text" ng-model="section_name" placeholder="Section name" class="form-control"/>
-            </div>
+
             <p class="text-right">
                 <a href="#save">
                     <span class="glyphicon glyphicon-arrow-up" aria-hidden="true"></span>
@@ -96,12 +136,18 @@
             </p>
 
         </form>
+        <form ng-submit="addSection(section_name)">
+            <div class="input-group">
+                <span>Section: </span>
+                <input type="text" ng-model="section_name" placeholder="Section name" class="form-control"/>
+            </div>
+        </form>
     </div>
 </div>
 <script>
     var filename = "{% .Params.Filename %}";
     var app = angular.module('app', ['ui.bootstrap']);
-    app.controller('data', ['$scope', '$http', "$timeout", function ($scope, $http, $timeout) {
+    app.controller('data', ['$scope', '$http', "$timeout", "$window", function ($scope, $http, $timeout, $window) {
         var timer = undefined;
         $scope.status = "Save";
         $scope.data = {};
@@ -109,7 +155,13 @@
             section.Values.push({Key: "", Value: ""});
         };
         $scope.addSection = function (name) {
-            $scope.data.Sections.push({Name: name, Values: [{Key: "", Value: ""}]})
+            for (var i = 0; i < $scope.data.Sections.length; ++i) {
+                if ($scope.data.Sections[i].Name === name) {
+                    return
+                }
+            }
+            $scope.section_name = '';
+            $scope.data.Sections.push({Name: name, Values: []})
         };
 
         $scope.changeSection = function (section) {
@@ -145,11 +197,83 @@
             $scope.status = "Saving...";
             $http.post('../data/' + filename, JSON.stringify($scope.data), {headers: {'Content-Type': 'application/json'}}).then(saved, failed);
         };
+        $scope.saveAsTemplate = function () {
+            var name = prompt("Please enter template name", "");
+
+            if (name === null || name === "") {
+
+            } else {
+                if (name.indexOf('.') === -1) {
+                    name += ".ini";
+                }
+                $http.post('../template/' + name, JSON.stringify($scope.data), {headers: {'Content-Type': 'application/json'}}).then(function () {
+                    $scope.updateTemplates();
+                }, failed);
+            }
+
+        };
+        $scope.selfRemove = function () {
+            $http.delete('../data/' + filename).then(function () {
+                $scope.links = $scope.links.filter(function (s) {
+                    return s !== filename;
+                });
+                if ($scope.links.length === 0)
+                    filename = 'untitled.ini';
+                else
+                    filename = $scope.links[0];
+                $window.location.href = filename;
+            });
+        };
+        $scope.addFile = function (name) {
+            if (name.indexOf('.') === -1) {
+                name += ".ini";
+            }
+            $http.post('../data/' + name, JSON.stringify({
+                Sections: [],
+                Defaults: []
+            }), {headers: {'Content-Type': 'application/json'}}).then(function () {
+
+                $window.location.href = name;
+            }, failed);
+        };
+
+        $scope.fromTemplate = function (templateName) {
+            var name = prompt("Please enter file name", "");
+
+            if (name === null || name === "") {
+
+            } else {
+                if (name.indexOf('.') === -1) {
+                    name += ".ini";
+                }
+                $http.post('../by-template/' + templateName + "?dest=" + name).then(function () {
+                    $window.location.href = name;
+                }, failed);
+            }
+        };
+
+        $scope.removeTemplate = function (templateName) {
+            $http.delete('../template/' + templateName).then(function () {
+                $scope.updateTemplates();
+            });
+        };
+
+        $scope.updateTemplates = function () {
+            $http.get('../templates').then(function (content) {
+                $scope.templates = content.data;
+                if (!$scope.templates) {
+                    $scope.templates = [];
+                }
+            });
+        };
 
         $http.get('../data/' + filename).then(function (content) {
             $scope.data = content.data;
+            if (!$scope.data.Sections) {
+                $scope.data.Sections = [];
+            }
         });
-
+        $scope.updateTemplates();
 
     }]);
 

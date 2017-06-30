@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"strings"
+	"os"
+	"path"
 )
 
 type Item struct {
@@ -82,9 +84,12 @@ func saveIniFile(filename string, res Params) error {
 }
 
 type View struct {
-	Params *Params
-	UUID   string
-	Links  []string
+	Params            *Params
+	UUID              string
+	Links             []string
+	AllowCreate       bool
+	AllowDelete       bool
+	AllowSaveTemplate bool
 }
 
 func (v *View) NextUUID() string {
@@ -117,15 +122,33 @@ func renderPage(params *Params) (string, error) {
 		return "", err
 	}
 	buf := &bytes.Buffer{}
-	err = t.Execute(buf, &View{Params: params, UUID: uuid.NewV4().String(), Links: scanFiles()})
+	err = t.Execute(buf, &View{Params: params,
+		UUID:                          uuid.NewV4().String(),
+		Links:                         scanFiles(),
+		AllowCreate:                   !*disableCreate,
+		AllowDelete:                   !*disableDelete,
+		AllowSaveTemplate:             !*disableSaveTemplate,
+	})
+
 	return buf.String(), err
 }
 
+var (
+	disableCreate       = flag.Bool("disable-create", false, "Disable create new configuration file")
+	disableDelete       = flag.Bool("disable-delete", false, "Disable remove configuration file")
+	disableSaveTemplate = flag.Bool("disable-save-template", false, "Disable save as template")
+	templatesDir        = flag.String("template", "templates", "Templates directory")
+	bind                = flag.String("bind", ":9000", "HTTP Binding")
+	workdir             = flag.String("w", ".", "Working directory")
+)
+
 //go:generate go-bindata-assetfs static/...
 func main() {
-	bind := flag.String("bind", ":9000", "HTTP Binding")
 	flag.Parse()
-
+	err := os.Chdir(*workdir)
+	if err != nil {
+		panic(err)
+	}
 	router := httprouter.New()
 	router.ServeFiles("/static/*filepath", assetFS())
 	router.GET("/data/:filename", func(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
@@ -143,6 +166,10 @@ func main() {
 	})
 	router.POST("/data/:filename", func(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
 		file := params.ByName("filename")
+		if _, err := os.Stat(file); os.IsNotExist(err) && *disableCreate {
+			http.Error(writer, err.Error(), http.StatusForbidden)
+			return
+		}
 		if request.Header.Get("Content-Type") != "application/json" {
 			http.Error(writer, "application/json required", http.StatusBadRequest)
 			return
@@ -160,8 +187,104 @@ func main() {
 		}
 		writer.WriteHeader(http.StatusNoContent)
 	})
+
+	router.GET("/templates", func(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+		stats, _ := ioutil.ReadDir(*templatesDir)
+		var names []string
+		for _, s := range stats {
+			names = append(names, s.Name())
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		ec := json.NewEncoder(writer)
+		ec.SetIndent("", "    ")
+		ec.Encode(names)
+	})
+
+	router.POST("/template/:filename", func(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+		file := params.ByName("filename")
+		if _, err := os.Stat(file); os.IsNotExist(err) && *disableSaveTemplate {
+			http.Error(writer, err.Error(), http.StatusForbidden)
+			return
+		}
+		if request.Header.Get("Content-Type") != "application/json" {
+			http.Error(writer, "application/json required", http.StatusBadRequest)
+			return
+		}
+		var cfg Params
+		err := json.NewDecoder(request.Body).Decode(&cfg)
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusBadRequest)
+			return
+		}
+		err = os.MkdirAll(*templatesDir, 0755)
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		err = saveIniFile(path.Join(*templatesDir, file), cfg)
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	})
+
+	router.DELETE("/template/:filename", func(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+		file := params.ByName("filename")
+		if *disableDelete {
+			http.Error(writer, "Access forbidden", http.StatusForbidden)
+			return
+		}
+		err := os.Remove(path.Join(*templatesDir, file))
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+
+	})
+
+	router.POST("/by-template/:filename", func(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+		file := params.ByName("filename")
+		dest := request.URL.Query().Get("dest")
+		if _, err := os.Stat(file); os.IsNotExist(err) && *disableCreate {
+			http.Error(writer, err.Error(), http.StatusForbidden)
+			return
+		}
+
+		prm, err := getIniFile(path.Join(*templatesDir, file))
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		err = saveIniFile(dest, prm)
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	})
+
+	router.DELETE("/data/:filename", func(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+		file := params.ByName("filename")
+		if *disableDelete {
+			http.Error(writer, "Access forbidden", http.StatusForbidden)
+			return
+		}
+		err := os.Remove(file)
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+
+	})
+
 	router.GET("/editor/:filename", func(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
 		file := params.ByName("filename")
+
 		prm, err := getIniFile(file)
 		if err != nil {
 			http.Error(writer, err.Error(), http.StatusInternalServerError)
