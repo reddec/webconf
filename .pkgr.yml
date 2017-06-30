@@ -1,1 +1,0 @@
-buildpack: "https://github.com/kr/heroku-buildpack-go#master"

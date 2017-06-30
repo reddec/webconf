@@ -11,7 +11,7 @@
 // static/ui-bootstrap-tpls-2.5.0.min.js
 // DO NOT EDIT!
 
-package main
+package propui
 
 import (
 	"github.com/elazarl/go-bindata-assetfs"
