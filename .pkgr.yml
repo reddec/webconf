@@ -2,9 +2,6 @@ targets:
   debian-7: &debian
     build_dependencies:
       - libpam0g-dev
-    dependencies:
-      - libpam0g
-      - git
   debian-8:
     <<: *debian
   ubuntu-12.04:
@@ -14,15 +11,9 @@ targets:
   ubuntu-16.04:
     <<: *debian
     build_dependencies:
-      - bzr
-      - mercurial
+      - git
   centos-6: &el
     build_dependencies:
       - pam-devel
       # required for go buildpack
       - perl-Digest-SHA
-    dependencies:
-      - pam
-      - git
-  centos-7:
-    <<: *el
