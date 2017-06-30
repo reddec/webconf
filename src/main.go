@@ -142,7 +142,7 @@ var (
 	workdir             = flag.String("w", ".", "Working directory")
 )
 
-//go:generate go-bindata-assetfs static/...
+//go:generate go-bindata-assetfs ../static/...
 func main() {
 	flag.Parse()
 	err := os.Chdir(*workdir)
