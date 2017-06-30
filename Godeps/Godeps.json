@@ -2,9 +2,6 @@
 	"ImportPath": "local/fun/propui",
 	"GoVersion": "go1.8",
 	"GodepVersion": "v79",
-	"Packages": [
-		"./src/..."
-	],
 	"Deps": [
 		{
 			"ImportPath": "github.com/elazarl/go-bindata-assetfs",
