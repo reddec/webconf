@@ -12,6 +12,11 @@ Features:
 
 # Install
 
+## Binary
+
+Provided by [Packager.IO](https://packager.io/gh/reddec/webconf/install)
+
+## From source
 
 ```
 go get -u github.com/jteeuwen/go-bindata/...
